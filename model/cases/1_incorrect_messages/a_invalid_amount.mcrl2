@@ -1,0 +1,294 @@
+% Specification of the Bitcoin Protocol, based on version 70001.
+% Author: W.J.B. Beukema (w.j.b.beukema@student.utwente.nl)
+% May 2014
+
+%% Setup: one malicious peer, two normal peers
+%% Case: a malicious peer propagates a transaction having invalid input transactions
+
+
+% Configuration
+eqn NUMBER_OF_NODES = 3;
+    MAX_NUMBER_OF_NEW_TRANSACTIONS = 0;
+
+% Data types
+sort Btc = Int;
+sort NodeID = Pos;
+sort Hash = Int;
+sort Offset = Int;
+
+sort Transaction    = struct transaction (List(RefTransaction), List(InTransaction)) | None;
+sort InTransaction  = struct intransaction(NodeID, Btc, NodeID) | mining(Btc, NodeID);
+sort RefTransaction = struct ref( Hash, Offset );
+
+sort TX             = struct tx(Hash, Transaction);
+sort TXlist         = List(TX);
+
+sort Block          = struct tx_block(Hash, Hash, TXlist) | none;
+sort BlockList      = List(Block);
+
+
+map NUMBER_OF_NODES, MAX_NUMBER_OF_NEW_TRANSACTIONS: Nat;
+map MAX_NODE_ID: Nat;
+eqn MAX_NODE_ID = (99+NUMBER_OF_NODES); 
+
+map GENESIS: Int;
+eqn GENESIS = 0;
+map GENESIS_BLOCK: Block;
+eqn GENESIS_BLOCK = tx_block(0,0,[tx(GENESIS,transaction([],[mining(1,100)]))]);
+
+map INCONSISTENT: Pos;
+eqn INCONSISTENT = 999;
+
+%% TX related functions
+map contains_hash : Hash # TXlist -> Bool;
+map get_hashvalue : TX -> Hash;
+map get_transactionvalue: TX -> Transaction;
+map get_transactions_amount: List(InTransaction) -> Btc;
+map get_transaction_from_txlist : Hash # TXlist -> Transaction;
+map get_transaction : Hash # TXlist # BlockList -> Transaction;
+map add_transaction : TX # TXlist -> TXlist;
+map remove_txs: TXlist # TXlist -> TXlist;
+map output_spent: List(RefTransaction) # TXlist -> Bool;
+map get_reftransactions : Transaction -> List(RefTransaction);
+map get_outtransactions : Transaction -> List(InTransaction);
+map total_input_amount : Transaction # TXlist # BlockList -> Btc;
+map total_input_amount2 : List(RefTransaction) # TXlist # BlockList -> Btc;
+map get_ref_hash : RefTransaction -> Hash;
+map get_ref_offset : RefTransaction -> Offset;
+
+map add_block: Block # BlockList -> BlockList;
+map get_block : Hash # BlockList -> Block;
+map get_block_value : Block -> TXlist;
+map get_block_hash : Block -> Hash;
+map previous_block: BlockList -> Hash;
+map contains_bhash : Hash # BlockList -> Bool;
+map blocklist_contains : Hash # BlockList -> Bool;
+map blocks_overlap: TXlist # TXlist -> Bool;
+map blocklist_overlap:  BlockList # TXlist -> Bool;
+map blocklist_contains: BlockList # Hash -> Bool;
+map get_transaction_from_blocks: Hash # BlockList -> Transaction;
+map inputs_receiver: List(RefTransaction) # TXlist # BlockList -> NodeID;
+map outputs_sender: List(InTransaction) -> NodeID;
+map valid_sender: Transaction # TXlist # BlockList -> Bool;
+
+var h:Hash, t:Transaction, hm:TX, txl:TXlist, pool:TXlist, ref_txs:List(RefTransaction), ref_tx:RefTransaction, in_txs:List(InTransaction), o:Offset, bl:BlockList;
+eqn get_hashvalue(tx(h, t)) = h;
+    get_transactionvalue(tx(h, t)) = t;
+    get_reftransactions(transaction(ref_txs, in_txs)) = ref_txs;
+    get_outtransactions(transaction(ref_txs, in_txs)) = in_txs;
+    get_ref_hash(ref(h, o)) = h;
+    get_ref_offset(ref(h, o)) = o;
+
+    % Checks whether a given TXlist contains a transaction with a given hash
+    txl == [] -> contains_hash(h, txl) = false;
+    txl != [] -> contains_hash(h, txl) = if(get_hashvalue(head(txl))== h, true, contains_hash(h, tail(txl)));
+
+    % Returns the transaction corresponding with a given hash, retreived from either the given TXList or the given BlockList
+    get_transaction(h, txl, bl) = if(contains_hash(h,txl),get_transaction_from_txlist(h,txl),if(blocklist_contains(bl,h),get_transaction_from_blocks(h,bl),None));
+
+    % Returns the transaction corresponding with a given hash, retreived from a given TXList
+    txl != [] -> get_transaction_from_txlist(h, txl) = if(get_hashvalue(head(txl))== h,get_transactionvalue(head(txl)),get_transaction_from_txlist(h,tail(txl)));
+
+
+    % Adds a given TX to a given TXList (sorted)
+    txl == [] -> add_transaction(hm,txl) = hm |> txl;
+    #txl == 1 -> add_transaction(hm,txl) = if(get_hashvalue(txl.0) < get_hashvalue(hm), hm |> txl, txl <| hm);
+    #txl >= 2 -> add_transaction(hm,txl) = if(get_hashvalue(txl.1) < get_hashvalue(hm), hm |> txl, head(txl) |> add_transaction(hm,tail(txl)));
+
+    % Removes all entities of a TXList (pool) from another TXList (txl)
+    pool == [] -> remove_txs(txl, pool) = [];
+    pool != [] -> remove_txs(txl, pool) = if(head(pool) in txl,remove_txs(txl,tail(pool)),head(pool)|>remove_txs(txl,tail(pool)));
+
+
+    % Checks whether a given list of input transactions has already ben used in a given TXList 
+    ref_txs == [] -> output_spent(ref_txs, txl) = false;
+    ref_txs != [] && txl == [] -> output_spent(ref_txs, txl) = output_spent(tail(ref_txs), txl);
+    ref_txs != [] && txl != [] -> output_spent(ref_txs, txl) = if(head(ref_txs) in get_reftransactions(get_transactionvalue(head(txl))),true,output_spent(ref_txs,tail(txl)));
+
+
+    % Returns the total input amount of a given transaction
+    total_input_amount(t, txl, bl) = total_input_amount2(get_reftransactions(t),txl,bl);
+    ref_txs != [] -> total_input_amount2(ref_txs,txl,bl) = get_transactions_amount(get_outtransactions(get_transaction(get_ref_hash(head(ref_txs)), txl,bl))) + total_input_amount2(tail(ref_txs),txl,bl);
+    ref_txs == [] -> total_input_amount2(ref_txs,txl,bl) = 0;
+
+    % Returns the total output amount of a given list of output transactions
+    in_txs == [] -> get_transactions_amount(in_txs) = 0;
+    in_txs != [] -> get_transactions_amount(in_txs) = tx_amount(head(in_txs)) + get_transactions_amount(tail(in_txs));
+
+    
+    % Determines whether the sender of the outputs is consistent as well as the receiver of the inputs, and if so, whether the receiver of the inputs is the sender of the outputs
+    valid_sender(t, txl, bl) = outputs_sender(get_outtransactions(t)) != INCONSISTENT && inputs_receiver(get_reftransactions(t), txl, bl) != INCONSISTENT && outputs_sender(get_outtransactions(t)) ==  inputs_receiver(get_reftransactions(t), txl, bl);
+
+    % Returns the NodeID of the sender of a given set of output transactions, if the NodeID is consistent through all output transactions.
+    #in_txs == 1 -> outputs_sender(in_txs) = tx_sender(head(in_txs));
+    #in_txs >  1 -> outputs_sender(in_txs) = if(tx_sender(head(in_txs)) == tx_sender(in_txs.1),outputs_sender(tail(in_txs)),INCONSISTENT);
+
+    % Returns the NodeID of the receiver of a given set of input transactions, if the NodeID is consistent through all input transactions.
+    #ref_txs == 1 -> inputs_receiver(ref_txs, txl, bl) = tx_receiver(get_outtransaction(get_transaction(get_ref_hash(head(ref_txs)), txl, bl)));
+    #ref_txs >  1 -> inputs_receiver(ref_txs, txl, bl) = if(tx_receiver(get_outtransaction(get_transaction(get_ref_hash(ref_txs.0), txl, bl))) == tx_receiver(get_outtransaction(get_transaction(get_ref_hash(ref_txs.1), txl, bl))),inputs_receiver(tail(ref_txs), txl, bl),999);
+
+    
+%% Block related functions
+var h:Hash, h2:Hash, hmb:Block, bl:BlockList, txl: TXlist, txl2: TXlist;
+eqn get_block_value(tx_block(h, h2, txl)) = txl;
+    get_block_hash (tx_block(h, h2, txl)) = h;
+
+    % Adds a given Block to a given BlockList (sorted)
+    bl == [] -> add_block(hmb,bl) = hmb |> bl;
+    #bl == 1 -> add_block(hmb,bl) = if(get_block_hash(bl.0) < get_block_hash(hmb), hmb |> bl, bl <| hmb);
+    #bl >= 2 -> add_block(hmb,bl) = if(get_block_hash(bl.1) < get_block_hash(hmb), hmb |> bl, head(bl) |> add_block(hmb,tail(bl)));
+
+    % Returns the hash of the 'chained' block, given a block
+    bl != [] -> previous_block(bl) = get_block_hash(head(bl));
+    bl == [] -> previous_block(bl) = GENESIS;
+    
+
+    % Checks whether a given BlockList contains a block with the given hash
+    bl == [] -> contains_bhash(h, bl) = false;
+    bl != [] -> contains_bhash(h, bl) = if(get_block_hash(head(bl))== h, true, contains_bhash(h, tail(bl)));
+
+    % Returns, given a blocklist, the Block corresponding to the given hash
+    bl != [] -> get_block(h, bl) = if(get_block_hash(head(bl))== h,head(bl),get_block(h,tail(bl)));
+
+    % Returns a transaction given a blocklist and a given transaction hash
+    bl != [] -> get_transaction_from_blocks(h, bl) = if(contains_hash(h, get_block_value(head(bl))), get_transaction_from_txlist(h, get_block_value(head(bl))), get_transaction_from_blocks(h, tail(bl)));
+    
+
+    % Determines whether two given blocks have overlapping transactions
+    txl2 == [] -> blocks_overlap(txl, txl2) = false;
+    txl2 != [] -> blocks_overlap(txl, txl2) = if(head(txl2) in txl,true,blocks_overlap(txl,tail(txl2)));
+
+    % Determines whether a given block overlaps with a given TXList
+    bl == [] -> blocklist_overlap(bl, txl) = false; 
+    bl != [] -> blocklist_overlap(bl, txl) = if(blocks_overlap(get_block_value(head(bl)),txl), true, blocklist_overlap(tail(bl), txl));
+
+    % Determines whether a given
+    bl == [] -> blocklist_contains(bl, h) = false;
+    bl != [] -> blocklist_contains(bl, h) = if(contains_hash(h,get_block_value(head(bl))), true, blocklist_contains(tail(bl), h));
+
+    
+
+map tx_receiver : InTransaction -> NodeID;
+map tx_sender   : InTransaction -> NodeID;
+map tx_amount   : InTransaction -> Btc;
+map get_outtransaction : Transaction -> InTransaction;
+var n:NodeID, n2:NodeID, b:Btc, itl:List(RefTransaction), otl:List(InTransaction), t:Transaction;
+eqn get_outtransaction(transaction(itl, otl)) = head(otl);
+    
+    % Returns the sender of a given transaction
+    tx_sender(intransaction(n,b,n2)) = n; 
+
+    % Returns the amount of a given transaction
+    tx_amount(mining(b,n2)) = b;          
+    tx_amount(intransaction(n,b,n2)) = b;
+
+    % Returns the receiver of a given transaction
+    tx_receiver(intransaction(n,b,n2)) = n2;
+    tx_receiver(mining(b,n2)) = n2;
+
+    
+
+act send_inv, send_getdata, recv_inv, recv_getdata, inv, inv', inv'', getdata, getdata', getdata'': NodeID # Hash #  NodeID;
+act send_tx, recv_tx,tx, tx', tx'' : NodeID # Hash # NodeID # Transaction;
+act send_block, recv_block, _block, _block' : NodeID # Hash # NodeID # Block;
+act validate_tx, validate_tx', validate_tx'', validate, check_tx: NodeID # Hash # Bool;
+act get_balance: NodeID # Btc;
+act transfer_btc, transfer_btc', transfer_btc'': NodeID # Btc # NodeID;
+act getHash', getHash'', getHash, generateHash: Int;
+act generate_block, generate_block', generate_block'', getBlock, blockgenerator : NodeID # TXlist;
+act validate_block, validate_block', validate_block'': NodeID # Hash # Bool;
+
+act ignore, ignore', ignore'';
+act error;
+
+
+
+
+
+proc Peer(n:NodeID, pool:TXlist, blocklist:BlockList, balance:Btc, unused_txs:List(RefTransaction)) = 
+      %% Sending an INV messages with blocks/transactions peer  knows about
+      sum n2 : NodeID, h : Hash . (n2 != n && (contains_hash(h,pool) || contains_bhash(h,blocklist))) -> send_inv(n,h,n2) . Peer() 
+      %% Sending an TX or BLOCK message if receiver is interested   
+      + sum n2 : NodeID, h : Hash . (n2 != n && contains_hash(h,pool))       -> (send_getdata(n2,h,n) . send_tx  (n,h,n2, get_transaction_from_txlist(h,pool)) . Peer() ) 
+      + sum n2 : NodeID, h : Hash . (n2 != n && contains_bhash(h,blocklist)) -> (send_getdata(n2,h,n) . send_block(n,h,n2, get_block(h,blocklist)) . Peer() ) 
+   
+      %% Transferring a BTC to another node
+      + (balance > 0) -> (sum n2 : NodeID . (100 <= n2 && n2 <= MAX_NODE_ID && n2 != n) -> transfer_btc'(n, 1, n2) . sum h:Hash . getHash'(h) . Peer(pool=add_transaction(tx(h,transaction([head(unused_txs)],[intransaction(n,1,n2)])),pool)))
+
+      %% Receiving an INV message
+      + sum n2 : NodeID, h : Hash . (n2 != n && h >= 0) -> recv_inv(n2,h,n) . ( 
+
+          % CASE: Peer does not know the hash value
+          (!contains_hash(h,pool) && !contains_bhash(h,blocklist)) -> 
+              recv_getdata(n,h,n2) . (
+                    % CASE: Hash belongs to a TX message
+                    (sum t : Transaction . recv_tx(n2, h, n, t) .                        
+                       ( 
+                          % CHECK: no empty inputs list, given inputs not already spent, output ammount is at least 1 btc, input amount should equal output amount, receiver of all inputs should be equal to the sender of all outputs
+                          % [accept]
+                          (get_reftransactions(t) != [] && !output_spent(get_reftransactions(t), pool) && !blocklist_contains(blocklist, h) && get_transactions_amount(get_outtransactions(t)) > 0 && total_input_amount(t, pool, blocklist) ==  get_transactions_amount(get_outtransactions(t)) && valid_sender(t, pool, blocklist)) -> (validate_tx'(n, h, true) . 
+                             Peer(pool=add_transaction(tx(h,t),pool), balance=if(tx_receiver(get_outtransaction(t)) == n,balance + tx_amount(get_outtransaction(t)),balance), unused_txs=if(tx_receiver(get_outtransaction(t)) == n,ref(h, 0)|>unused_txs,unused_txs))
+                           )
+
+                          % [refuse]
+                          + (get_reftransactions(t) == [] || output_spent(get_reftransactions(t), pool) || blocklist_contains(blocklist, h) || get_transactions_amount(get_outtransactions(t)) <= 0 ||  total_input_amount(t, pool, blocklist) !=  get_transactions_amount(get_outtransactions(t)) || !valid_sender(t, pool, blocklist)) -> (validate_tx'(n, h, false) . Peer())
+                       )
+                    )
+                    
+                   % CASE: Hash belongs to BLOCK message
+                   + (sum b : Block . recv_block(n2, h, n, b) .
+                      % CASE: Block does not include transaction(s) that this peer has already put in another block [accept]
+                      (!blocklist_overlap(blocklist, get_block_value(b)) -> validate_block'(n, h, true) . Peer(pool=remove_txs(get_block_value(b), pool), blocklist=add_block(b, blocklist))
+                      
+                      % CASE: Block includes transaction that this peer has already put in another block [refuse]
+                      + (blocklist_overlap(blocklist, get_block_value(b)) -> validate_block'(n, h, false) . Peer())))
+          )
+                
+          % CASE: Peer does already know about the hash value                           
+          + (contains_hash(h,pool)  ||  contains_bhash(h,blocklist)) -> ignore' . Peer()
+       )
+
+
+
+      %% Generate a new block
+      + (pool != []) -> generate_block'(n,pool) . sum h:Hash . getHash'(h) . Peer(pool=[], blocklist = add_block(tx_block(h, previous_block(blocklist), pool), blocklist))
+      
+      %% Error detection
+      +  (unused_txs == [] && balance != 0) -> error . Peer()   
+      +  ( #blocklist > 2) -> error . Peer()  
+      +  ( #pool > 1) -> error . Peer()
+      +  ( #unused_txs > 1) -> error . Peer();
+
+
+% Forces the general process into a defined sequence of actions that cannot be interupted.
+proc Force(x:Int) = (sum n,n2:NodeID, h:Hash . inv'(n,h,n2) . (ignore'' + getdata'(n2,h,n) . ((sum t:Transaction .tx'(n,h,n2,t) . sum b:Bool .validate_tx''(n2,h,b)) + (sum txb:Block . _block'(n,h,n2,txb) . sum b:Bool .validate_block''(n2,h,b)))) . Force()
+                  + (sum n:NodeID, txl:TXlist . generate_block''(n, txl) . sum h:Hash . getHash''(h) . Force()))
+                  + ((x > 0) -> sum n,n2:NodeID . transfer_btc''(n, 1, n2) . sum h:Hash . getHash''(h) . Force(x=x-1));
+
+% Generates a new, unique hash. Behaves the same as a simple counter. 
+proc HashGenerator(n:Nat) = generateHash(n) . HashGenerator(n+1)
+                          + ((n > 2 + 2*MAX_NUMBER_OF_NEW_TRANSACTIONS + 1) -> error . HashGenerator());
+
+init hide( { getHash, ignore },          
+       allow({ inv, getdata, tx, validate, transfer_btc, ignore, getHash, validate_block, _block, validate_tx, error},
+         comm({ send_inv | recv_inv | inv' -> inv,
+                send_getdata | recv_getdata | getdata' -> getdata,
+                send_tx | recv_tx | tx' -> tx,
+                send_block | recv_block | _block' -> _block,
+                transfer_btc' | transfer_btc'' -> transfer_btc,
+                generateHash | getHash' | getHash'' -> getHash,
+                generate_block' | generate_block'' -> generate_block,
+                validate_block'  | validate_block'' -> validate_block,
+                validate_tx' | validate_tx'' -> validate_tx,
+
+                ignore' | ignore'' -> ignore
+              },
+           
+              Peer(100, [tx(1,transaction([ref(0,0)],[intransaction(100,0,102)]))], [GENESIS_BLOCK], 0, []) 
+              || Peer(101, [], [GENESIS_BLOCK], 0, []) 
+              || Peer(102, [], [GENESIS_BLOCK], 0, [])  
+
+              || HashGenerator(2) || Force(MAX_NUMBER_OF_NEW_TRANSACTIONS)
+        )     
+      )
+);
