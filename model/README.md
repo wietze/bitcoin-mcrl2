@@ -1,17 +1,19 @@
 ##Contents
-* 1_incorrect_messages/
+* model.mcrl2 (the actual model)
+* cases/1_incorrect_messages/
     * a_invalid_amount.mcrl2
     * b_invalid_outputs.mcrl2
     * c_invalid_inputs.mcrl2
-* 2_contradictin_messages/
+* cases/2_contradictin_messages/
     * a_same_input_different_output.mcrl2
-* 3_partial_messages/
-* 4_ignoring_incomming_messages/
+* cases/3_partial_messages/
+* cases/4_ignoring_incomming_messages/
     * a_peer.mcrl2
     * b_tx_receiver.mcrl2
     * c_tx_sender.mcrl2
     * d_block.mcrl2
-* model.mcrl2
+
+To see what the models in subdirectories of cases/ exactly specify, please open the mcrl2 files and read the comments at the beginning.
 
 ##Analysis
 A few important notes on the created models.
