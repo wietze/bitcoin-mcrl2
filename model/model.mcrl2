@@ -2,12 +2,12 @@
 % Author: W.J.B. Beukema (w.j.b.beukema@student.utwente.nl)
 % May 2014
 
-%% Setup: one malicious peer (100), three normal peers (101, 102, 103)
-%% Case: a malicious peer propagates a transaction which its output amount is greater than its input amount
+%% Setup: three normal peers (100, 101, 102)
+%% Case: ideal situation
 
 % Configuration
-eqn NUMBER_OF_NODES = 4;               % This number should be equal to the number of defined Peer processes
-    MAX_NUMBER_OF_NEW_TRANSACTIONS = 0;
+eqn NUMBER_OF_NODES = 2;               % This number should be equal to the number of defined Peer processes
+    MAX_NUMBER_OF_NEW_TRANSACTIONS = 4;
 
 % Data types
 sort Btc = Int;
@@ -234,10 +234,10 @@ proc Peer(n:NodeID, pool:TXlist, blocklist:BlockList, balance:Btc, unused_txs:Li
                           (get_reftransactions(t) != [] && !output_spent(get_reftransactions(t), pool) && !contains_txhash(h, blocklist)  && has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) && get_transactions_amount(get_outtransactions(t)) > 0 && total_input_amount(t, pool, blocklist) ==  get_transactions_amount(get_outtransactions(t)) && valid_sender(t, pool, blocklist)) -> (validate_tx'(n, h, true) . 
                              Peer(pool=add_transaction(tx(h,t),pool), balance=if(tx_receiver(get_outtransaction(t)) == n,balance + tx_amount(get_outtransaction(t)),balance), unused_txs=if(tx_receiver(get_outtransaction(t)) == n,ref(h, 0)|>unused_txs,unused_txs))
                            )
-
-                          % [refuse]                          
-                          + ((!has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) || total_input_amount(t, pool, blocklist) !=  get_transactions_amount(get_outtransactions(t))) -> (validate_tx'(n, h, false) . Peer()))
-                          + (get_reftransactions(t) == [] || (has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) && total_input_amount(t, pool, blocklist) ==  get_transactions_amount(get_outtransactions(t)) && (output_spent(get_reftransactions(t), pool) || contains_txhash(h, blocklist) || get_transactions_amount(get_outtransactions(t)) <= 0  || !valid_sender(t, pool, blocklist)))) -> (error .  Peer())
+ 
+                          % [refuse]                         
+                          + (!has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) -> (validate_tx'(n, h, false) . Peer()))
+                          + (get_reftransactions(t) == [] || (has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) && (output_spent(get_reftransactions(t), pool) || contains_txhash(h, blocklist) || get_transactions_amount(get_outtransactions(t)) <= 0 ||  total_input_amount(t, pool, blocklist) !=  get_transactions_amount(get_outtransactions(t)) || !valid_sender(t, pool, blocklist)))) -> (error .  Peer())
                        )
                     )
                     
@@ -259,15 +259,12 @@ proc Peer(n:NodeID, pool:TXlist, blocklist:BlockList, balance:Btc, unused_txs:Li
       %% Generate a new block
       + (pool != []) -> generate_block'(n,pool) . sum h:Hash . getHash'(h) . Peer(pool=[], blocklist = add_block(tx_block(h, previous_block(blocklist), pool), blocklist))
       
-      %% Additional error detection
+      %% Error detection
       +  (unused_txs == [] && balance != 0) -> error . Peer()   
-      +  (#blocklist > (2+MAX_NUMBER_OF_NEW_TRANSACTIONS)) -> error . Peer()  
-      +  (n == 100 && #pool > 1+MAX_NUMBER_OF_NEW_TRANSACTIONS) -> error . Peer()
-      +  (n != 100 && #pool > MAX_NUMBER_OF_NEW_TRANSACTIONS) -> error . Peer()
-      +  (n == 100 && #unused_txs > 1+MAX_NUMBER_OF_NEW_TRANSACTIONS) -> error . Peer()
-      +  (n != 100 && #unused_txs > MAX_NUMBER_OF_NEW_TRANSACTIONS) -> error . Peer()      
-      +  (n == 100 && balance > 1+MAX_NUMBER_OF_NEW_TRANSACTIONS) -> error. Peer()
-      +  (n != 100 && balance > MAX_NUMBER_OF_NEW_TRANSACTIONS) -> error. Peer()
+      +  (#blocklist > (1+MAX_NUMBER_OF_NEW_TRANSACTIONS)) -> error . Peer()  
+      +  (#pool > MAX_NUMBER_OF_NEW_TRANSACTIONS) -> error . Peer()
+      +  (#unused_txs > MAX_NUMBER_OF_NEW_TRANSACTIONS) -> error . Peer()
+      +  (balance > 1) -> error. Peer()
      ;
 
 
@@ -295,12 +292,12 @@ init hide( { getHash, ignore },
 
                 ignore' | ignore'' -> ignore
               },
-                                          % Sum of inputs is 1BTC, sum of outputs 2BTC
-              Peer(100, [tx(1,transaction([ref(0,0)], [outtransaction(100,1,102), outtransaction(100,1,102)]))], [GENESIS_BLOCK], 1, [ref(0,0)]) 
+                                                      
+              Peer(100, [],[GENESIS_BLOCK], 1, [ref(0,0)]) 
               || Peer(101, [], [GENESIS_BLOCK], 0, []) 
               || Peer(102, [], [GENESIS_BLOCK], 0, [])  
-              || Peer(103, [], [GENESIS_BLOCK], 0, []) 
-              || HashGenerator(2) || Force(MAX_NUMBER_OF_NEW_TRANSACTIONS)
+
+              || HashGenerator(1) || Force(MAX_NUMBER_OF_NEW_TRANSACTIONS)
         )     
       )
 );

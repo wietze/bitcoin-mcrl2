@@ -3,7 +3,8 @@
 % May 2014
 
 %% Setup: one malicious peer (100), three normal peers (101, 102, 103)
-%% Case: a malicious peer propagates a transaction which its output amount is greater than its input amount
+%% Case: a malicious peer propagates a transaction which refers to a non-existing transaction as an input.
+
 
 % Configuration
 eqn NUMBER_OF_NODES = 4;               % This number should be equal to the number of defined Peer processes
@@ -234,10 +235,11 @@ proc Peer(n:NodeID, pool:TXlist, blocklist:BlockList, balance:Btc, unused_txs:Li
                           (get_reftransactions(t) != [] && !output_spent(get_reftransactions(t), pool) && !contains_txhash(h, blocklist)  && has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) && get_transactions_amount(get_outtransactions(t)) > 0 && total_input_amount(t, pool, blocklist) ==  get_transactions_amount(get_outtransactions(t)) && valid_sender(t, pool, blocklist)) -> (validate_tx'(n, h, true) . 
                              Peer(pool=add_transaction(tx(h,t),pool), balance=if(tx_receiver(get_outtransaction(t)) == n,balance + tx_amount(get_outtransaction(t)),balance), unused_txs=if(tx_receiver(get_outtransaction(t)) == n,ref(h, 0)|>unused_txs,unused_txs))
                            )
+                          
 
-                          % [refuse]                          
-                          + ((!has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) || total_input_amount(t, pool, blocklist) !=  get_transactions_amount(get_outtransactions(t))) -> (validate_tx'(n, h, false) . Peer()))
-                          + (get_reftransactions(t) == [] || (has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) && total_input_amount(t, pool, blocklist) ==  get_transactions_amount(get_outtransactions(t)) && (output_spent(get_reftransactions(t), pool) || contains_txhash(h, blocklist) || get_transactions_amount(get_outtransactions(t)) <= 0  || !valid_sender(t, pool, blocklist)))) -> (error .  Peer())
+                          % [refuse]                         
+                          + (!has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) -> (validate_tx'(n, h, false) . Peer()))
+                          + (get_reftransactions(t) == [] || (has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) && (output_spent(get_reftransactions(t), pool) || contains_txhash(h, blocklist) || get_transactions_amount(get_outtransactions(t)) <= 0 ||  total_input_amount(t, pool, blocklist) !=  get_transactions_amount(get_outtransactions(t)) || !valid_sender(t, pool, blocklist)))) -> (error .  Peer())
                        )
                     )
                     
@@ -279,7 +281,6 @@ proc Force(x:Int) = (sum n,n2:NodeID, h:Hash . inv'(n,h,n2) . (ignore'' + getdat
 
 % Generates a new, unique hash. Behaves the same as a simple counter. 
 proc HashGenerator(n:Nat) = generateHash(n) . HashGenerator(n+1);
-                         % + ((n > 2 + 2*MAX_NUMBER_OF_NEW_TRANSACTIONS + 1) -> error . HashGenerator());
 
 init hide( { getHash, ignore },          
        allow({ inv, getdata, tx, validate, transfer_btc, ignore, getHash, validate_block, _block, validate_tx, error, generate_block},
@@ -295,11 +296,12 @@ init hide( { getHash, ignore },
 
                 ignore' | ignore'' -> ignore
               },
-                                          % Sum of inputs is 1BTC, sum of outputs 2BTC
-              Peer(100, [tx(1,transaction([ref(0,0)], [outtransaction(100,1,102), outtransaction(100,1,102)]))], [GENESIS_BLOCK], 1, [ref(0,0)]) 
+                                          % Refering to non-existing hash
+              Peer(100, [tx(1, transaction([ref(5, 0)],[outtransaction(100, 0, 101)]))], [GENESIS_BLOCK], 1, [ref(0,0)]) 
               || Peer(101, [], [GENESIS_BLOCK], 0, []) 
               || Peer(102, [], [GENESIS_BLOCK], 0, [])  
-              || Peer(103, [], [GENESIS_BLOCK], 0, []) 
+              || Peer(103, [], [GENESIS_BLOCK], 0, [])  
+
               || HashGenerator(2) || Force(MAX_NUMBER_OF_NEW_TRANSACTIONS)
         )     
       )
