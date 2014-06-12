@@ -1,5 +1,5 @@
 ##Contents
-* model.mcrl2 (the actual model)
+* model.mcrl2 *(the actual model)*
 * cases/1_incorrect_messages/
     * a_invalid_amount.mcrl2
     * b_invalid_outputs.mcrl2
@@ -7,6 +7,9 @@
 * cases/2_contradictin_messages/
     * a_same_input_different_output.mcrl2
 * cases/3_partial_messages/
+    * a_only_inv_messages.mcrl2
+    * b_only_tx_messages.mcrl2
+    * c_only_block_messages.mcrl2        
 * cases/4_ignoring_incomming_messages/
     * a_peer.mcrl2
     * b_tx_receiver.mcrl2
@@ -28,7 +31,7 @@ You can turn normal peers into malicious peers by changing Peer() processes in t
 ##Running a simulation
 Make sure you have installed the [mCRL2](http://www.mcrl2.org/) toolkit. 
 
-To run a simulation of a model, first generate a linear program specification (LPS) using `mcrl22lps`:
+To run a simulation of a model, first generate a linear process specification (LPS) using `mcrl22lps`:
 
     $ ./bin/mcrl22lps model.mcrl2 model.lps
 
@@ -40,7 +43,7 @@ Secondly, run `lpssim` for command line simulation or `lpsxsim` for a GUI:
 The command line interface or GUI will guide you through the simulation.
 
 ##Generating an LTS (Labeled Transition System)
-To generate an LTS, first generate an LPS using `mcrl22lps`:
+In order to generate an LTS, first generate an LPS using `mcrl22lps`:
 
     $ ./bin/mcrl22lps model.mcrl2 model.lps
 
@@ -48,9 +51,9 @@ Secondly, run `lps2lts` with the following parameters:
 
     $ ./bin/lps2lts -aerror -D -t1 -v model.lps model.lts
     
-Running this command, an lts will be generated. When the linearisation has completed, the number of states, depth and number of traces will be printed.
+Running this command, an LTS will be generated. When the linearisation has completed, the number of states, depth and number of traces will be printed.
 ###On error actions
-If an `error` action occurs, the file 'model.lps_act_0_error.trc' will be generated, containing information about the trace that leads to the `error` action. To get the trace in plaintext, run `tracepp`:
+If an `error` action is found while generating the LTS, the file 'model.lps_act_0_error.trc' will be generated, containing information about the trace that leads to the `error` action. To get the trace in plaintext, run `tracepp`:
 
     $ ./bin/tracepp model.lps_act_0_error.trc trace.txt
     

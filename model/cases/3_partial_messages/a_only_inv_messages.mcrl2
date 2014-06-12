@@ -2,12 +2,13 @@
 % Author: W.J.B. Beukema (w.j.b.beukema@student.utwente.nl)
 % May 2014
 
-%% Setup: three normal peers (100, 101, 102)
-%% Case: ideal situation
+%% Setup: one malicious peer (101), four normal peers (102, 103, 104, 105)
+%% Case: a malicious peer propagates only sends inv messages. 
+
 
 % Configuration
-eqn NUMBER_OF_NODES = 3;               % This number should be equal to the number of defined Peer processes
-    MAX_NUMBER_OF_NEW_TRANSACTIONS = 4;
+eqn NUMBER_OF_NODES = 5;               % This number should be equal to the number of defined Peer processes
+    MAX_NUMBER_OF_NEW_TRANSACTIONS = 0;
 
 % Data types
 sort Btc = Int;
@@ -234,10 +235,10 @@ proc Peer(n:NodeID, pool:TXlist, blocklist:BlockList, balance:Btc, unused_txs:Li
                           (get_reftransactions(t) != [] && !output_spent(get_reftransactions(t), pool) && !contains_txhash(h, blocklist)  && has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) && get_transactions_amount(get_outtransactions(t)) > 0 && total_input_amount(t, pool, blocklist) ==  get_transactions_amount(get_outtransactions(t)) && valid_sender(t, pool, blocklist)) -> (validate_tx'(n, h, true) . 
                              Peer(pool=add_transaction(tx(h,t),pool), balance=if(tx_receiver(get_outtransaction(t)) == n,balance + tx_amount(get_outtransaction(t)),balance), unused_txs=if(tx_receiver(get_outtransaction(t)) == n,ref(h, 0)|>unused_txs,unused_txs))
                            )
- 
-                          % [refuse]                         
-                          + (!has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) -> (validate_tx'(n, h, false) . Peer()))
-                          + (get_reftransactions(t) == [] || (has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) && (output_spent(get_reftransactions(t), pool) || contains_txhash(h, blocklist) || get_transactions_amount(get_outtransactions(t)) <= 0 ||  total_input_amount(t, pool, blocklist) !=  get_transactions_amount(get_outtransactions(t)) || !valid_sender(t, pool, blocklist)))) -> (error .  Peer())
+
+                          % [refuse]                          
+                          + ((!has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) || total_input_amount(t, pool, blocklist) !=  get_transactions_amount(get_outtransactions(t))) -> (validate_tx'(n, h, false) . Peer()))
+                          + (get_reftransactions(t) == [] || (has_transaction(get_ref_hash(head(get_reftransactions(t))), pool, blocklist) && total_input_amount(t, pool, blocklist) ==  get_transactions_amount(get_outtransactions(t)) && (output_spent(get_reftransactions(t), pool) || contains_txhash(h, blocklist) || get_transactions_amount(get_outtransactions(t)) <= 0  || !valid_sender(t, pool, blocklist)))) -> (error .  Peer())
                        )
                     )
                     
@@ -248,6 +249,7 @@ proc Peer(n:NodeID, pool:TXlist, blocklist:BlockList, balance:Btc, unused_txs:Li
                       
                       % CASE: Block includes transaction that this peer has already put in another block [refuse]
                       + ((blocklist_overlap(blocklist, get_block_value(b)) || !contains_bhash(get_block_previous_hash(b),blocklist)) -> validate_block'(n, h, false) . Peer())))
+                  + (ignore' . Peer())
           )
                 
           % CASE: Peer does already know about the hash value                           
@@ -261,25 +263,32 @@ proc Peer(n:NodeID, pool:TXlist, blocklist:BlockList, balance:Btc, unused_txs:Li
       
       %% Error detection
       +  (unused_txs == [] && balance != 0) -> error . Peer()   
-      +  (#blocklist > (1+MAX_NUMBER_OF_NEW_TRANSACTIONS)) -> error . Peer()  
-      +  (#pool > MAX_NUMBER_OF_NEW_TRANSACTIONS) -> error . Peer()
+      +  (#blocklist > (2+MAX_NUMBER_OF_NEW_TRANSACTIONS)) -> error . Peer()  
+      +  (n == 100 && #pool > 1+MAX_NUMBER_OF_NEW_TRANSACTIONS) -> error . Peer()
+      +  (n != 100 && #pool > MAX_NUMBER_OF_NEW_TRANSACTIONS) -> error . Peer()
       +  (#unused_txs > MAX_NUMBER_OF_NEW_TRANSACTIONS) -> error . Peer()
       +  (balance > 1) -> error. Peer()
      ;
 
 
+proc MaliciousPeer(n:NodeID, pool:TXlist, blocklist:BlockList, balance:Btc, unused_txs:List(RefTransaction)) = 
+      %% Sending an INV messages with blocks/transactions peer  knows about
+      sum n2 : NodeID, h : Hash . (n2 != n && (contains_hash(h,pool) || contains_bhash(h,blocklist))) -> send_inv(n,h,n2) . MaliciousPeer()                 
+      + sum n2 : NodeID, h : Hash . (n2 != n && contains_hash(h,pool))       -> send_getdata(n2,h,n)  . MaliciousPeer()  
+      + sum n2 : NodeID, h : Hash . (n2 != n && contains_bhash(h,blocklist)) -> send_getdata(n2,h,n)  . MaliciousPeer()  
+      ;
 
 % Forces the general process into a defined sequence of actions that cannot be interupted.
-proc Force(x:Int) = (sum n,n2:NodeID, h:Hash . inv'(n,h,n2) . (ignore'' + getdata'(n2,h,n) . ((sum t:Transaction .tx'(n,h,n2,t) . sum b:Bool .validate_tx''(n2,h,b)) + (sum txb:Block . _block'(n,h,n2,txb) . sum b:Bool .validate_block''(n2,h,b)))) . Force()
+proc Force(x:Int) = (sum n,n2:NodeID, h:Hash . inv'(n,h,n2) . (ignore'' + getdata'(n2,h,n) . (ignore'' + ((sum t:Transaction .tx'(n,h,n2,t) . sum b:Bool .validate_tx''(n2,h,b)) + (sum txb:Block . _block'(n,h,n2,txb) . sum b:Bool .validate_block''(n2,h,b))))) . Force()
                   + (sum n:NodeID, txl:TXlist . generate_block''(n, txl) . sum h:Hash . getHash''(h) . Force()))
                   + ((x > 0) -> sum n,n2:NodeID . transfer_btc''(n, 1, n2) . sum h:Hash . getHash''(h) . Force(x=x-1));
 
 % Generates a new, unique hash. Behaves the same as a simple counter. 
-proc HashGenerator(n:Nat) = generateHash(n) . HashGenerator(n+1);
-                         % + ((n > 2 + 2*MAX_NUMBER_OF_NEW_TRANSACTIONS + 1) -> error . HashGenerator());
+proc HashGenerator(n:Nat) = generateHash(n) . HashGenerator(n+1)
+                          + ((n > 2 + 2*MAX_NUMBER_OF_NEW_TRANSACTIONS + 1) -> error . HashGenerator());
 
 init hide( { getHash, ignore },          
-       allow({ inv, getdata, tx, validate, transfer_btc, ignore, getHash, validate_block, _block, validate_tx, error, generate_block},
+       allow({ inv, getdata, tx, validate, transfer_btc, ignore, getHash, validate_block, _block, validate_tx, error},
          comm({ send_inv | recv_inv | inv' -> inv,
                 send_getdata | recv_getdata | getdata' -> getdata,
                 send_tx | recv_tx | tx' -> tx,
@@ -292,12 +301,14 @@ init hide( { getHash, ignore },
 
                 ignore' | ignore'' -> ignore
               },
-                                                      
-              Peer(100, [],[GENESIS_BLOCK], 1, [ref(0,0)]) 
+                                                     
+              MaliciousPeer(100, [tx(1, transaction([ref(0,0)], [outtransaction(100,0,101)]))], [GENESIS_BLOCK], 1, [ref(0, 0)])
               || Peer(101, [], [GENESIS_BLOCK], 0, []) 
               || Peer(102, [], [GENESIS_BLOCK], 0, [])  
+              || Peer(103, [], [GENESIS_BLOCK], 0, [])  
+              || Peer(104, [], [GENESIS_BLOCK], 0, [])  
 
-              || HashGenerator(1) || Force(MAX_NUMBER_OF_NEW_TRANSACTIONS)
+              || HashGenerator(2) || Force(MAX_NUMBER_OF_NEW_TRANSACTIONS)
         )     
       )
 );

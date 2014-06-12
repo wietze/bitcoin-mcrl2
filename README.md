@@ -6,6 +6,3 @@ The mCRL2 toolset is used to verify the Bitcoin Protocol. For more information a
 
 ## Model
 In the *model* subdirectory, you can find a simplified model of the Bitcoin Protocol expressed in mCRL2. To verify the model, we make use of scenario-based analysis. Therefore, multiple versions of the model are included in this directory, all representing a certain scenario. Read the readmy of that subdirectory for more information.
-
-
-__NOTE: this repository is still under development__
